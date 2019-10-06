@@ -257,7 +257,7 @@ def main():
     manager = DisplayManager()
 
     print(
-        "Basic SQL viewer - Kieran Bacon - https://github.com/Kieran-Bacon\n"
+        "Basic SQL viewer - Kieran Bacon - https://github.com/Kieran-Bacon"
     )
 
     if len(arguments) ==  1:

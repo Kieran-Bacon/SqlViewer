@@ -25,9 +25,11 @@ setup(
     author="Kieran Bacon",
     author_email="kieran.bacon@outlook.com",
 
+    packages=['sqlviewer'],
+
     entry_points={
         'console_scripts': [
-            'sql = viewer:main',
+            'sql = sqlviewer.viewer:main',
         ],
     }
 )

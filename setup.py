@@ -31,5 +31,9 @@ setup(
         'console_scripts': [
             'sql = sqlviewer.viewer:main',
         ],
+        'sqlviewer_connectors': [
+            'sqlite = sqlviewer.connector:SQLiteConnector',
+            'postgres = sqlviewer.connector:PostgresConnector'
+        ]
     }
 )

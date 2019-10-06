@@ -1,80 +1,13 @@
 import os
 import sys
-import sqlalchemy
 import typing
 from better import ConfigParser
 import contextlib
 import readline
 import atexit
-import time
+import pkg_resources
 
-def table(
-    columns: typing.Iterable[str],
-    rows: typing.Iterable[typing.Iterable[object]],
-    *,
-    title: str = None,
-    buffer: int = 2
-):
-    """ Render a basic table
-
-    Params:
-        columns (Iterable[str]): The columns of the table
-        rows (Iterable[Iterable[object]]): An iterable providing rows with arbitrary typed
-        *,
-        title (str): --
-        buffer (int): The white space to be added to a column's width after setting width to the largest column entry
-    """
-
-    # Determine the width of the window
-    _, terminalWidth = os.popen('stty size', 'r').read().split()
-    terminalWidth = int(terminalWidth)
-    tprint = lambda x: print(x) if len(x) < terminalWidth else print(x[:terminalWidth - 4] + '...')
-
-    # Determine the columns widths
-    columnWidths = [0]*len(columns)
-    for row in [columns] + rows:
-        for i in range(len(columns)):
-            columnWidths[i] = max(columnWidths[i], len(str(row[i])))
-    columnWidths = [x + buffer for x in columnWidths]
-
-    # define the row formats
-    rowTemplate = '|'.join(['{'+str(i)+':^{'+str(i + len(columns))+'}}' for i in range(len(columns))])
-
-    header = rowTemplate.format(*columns, *columnWidths)
-    print()
-
-    if title is not None:
-        width = min(terminalWidth, len(header))
-        print("{0:^{1}}".format(title, width))
-        print('='*width)
-
-    tprint(header)
-    tprint('='*len(header))
-    for row in rows:
-        tprint(rowTemplate.format(*[str(x) for x in row], *columnWidths))
-    print()
-
-class SQLAlchemyConnector:
-    """ Basic connector to connections supported by the sqlalchemy url method """
-
-    def __init__(self, **kwargs):
-        self.engine = sqlalchemy.engine.create_engine(sqlalchemy.engine.url.URL(**kwargs))
-
-    def execute(self, command: str):
-        """ Execute command against the underlying engine and render any table response
-
-        Params:
-            command (str): the sql query to be executed
-        """
-
-        start = time.time()
-        resultProxy = self.engine.execute(command)
-        columns = resultProxy.keys()
-        if columns:
-            rows = resultProxy.fetchmany(size=80)
-            table(columns, rows)
-
-        print("Command executed in {}".format(time.time() - start))
+from . import render
 
 class DisplayManager:
     """ Intergrated terminal environment for the connection and execution of sql commands. Basic input looper. """
@@ -85,11 +18,12 @@ class DisplayManager:
     MASTER_HISTORY = os.path.join(DIRECTORY, 'master.hist')
 
     def __init__(self):
+        self.config = ConfigParser().read(self.MASTER_PATH)
+        self._loaded_connectors = {}
+
         readline.clear_history()
         readline.read_history_file(self.MASTER_HISTORY)
         readline.set_history_length(100)
-
-        self.config = ConfigParser().read(self.MASTER_PATH)
 
         atexit.register(lambda path: self.config.write(path), self.MASTER_PATH)
 
@@ -105,7 +39,7 @@ class DisplayManager:
         )
 
     def displayConfig(self):
-        table(
+        render.table(
             columns = ['NAME', 'TYPE', 'SETTINGS'],
             rows = [
                 [
@@ -126,21 +60,17 @@ class DisplayManager:
                 if not command: continue
 
                 if command[0] == 'add':
-                    if len(command) == 2:
-                        self.add(command[1])
-                    else:
-                        raise ValueError('some shit')
+                    # User is attempting to add a new connection
+                    assert len(command) ==  2, "add requires two arguments"
+                    self.add(command[1])
 
                 elif command[0] == 'connect':
-                    assert len(command) == 2
+                    assert len(command) == 2, "connect requires two arguments"
                     self.connect(command[1])
 
                 elif command[0] == 'remove':
-                    if command[1] in self.config:
-                        del self.config[command[1]]
-                        os.remove(os.path.join(self.HISTORY_PATH, command[1] + '.hist'))
-                    else:
-                        raise ValueError("Not connection exists with that name")
+                    assert len(command) == 2, "remove requires two arguments"
+                    self.remove(command[1])
 
                 elif command[0] == 'list':
                     self.displayConfig()
@@ -155,8 +85,8 @@ class DisplayManager:
                     print("Unknown command: {}".format(command))
 
             except Exception as e:
-                print("Error on command: {}".format(e))
-                self.interaction_help()
+                print("\nERROR: {}".format(e))
+                print("enter 'help' for commands\n")
 
             except KeyboardInterrupt:
                 print()
@@ -164,67 +94,59 @@ class DisplayManager:
 
     def add(self, name: str):
         """ Add a new connection variable - test the connection save the variables """
-        print("Adding new connection object named {}...".format(name))
+        print("Adding new connection object '{}'...\n".format(name))
 
-        conn = {}
-        for question in ['drivername', 'host', 'port', 'database', 'username', 'password']:
-            answer = input('{}: '.format(question))
-            if answer: conn[question] = answer
+        drivername = input("Drivername: ")
 
-        if conn['drivername'] == 'sqlite':
-            conn['database'] = os.path.abspath(conn['database'])
-
+        connector = self._load(drivername)
         try:
-            SQLAlchemyConnector(**conn)
-            self.config[name] = conn
-            print("Successfully added new connection")
+            config = connector.setup()
+        except KeyboardInterrupt:
+            return print("Setup cancelled.")
 
-        except Exception as e:
-            print('Error on attempted connection to new database: {}'.format(e))
-
+        # Add the driver name to the config for this viewer to determine its class
+        config['drivername'] = drivername
+        self.config[name] = config
+        print("Successfully added new connection")
 
     def connect(self, name: str):
         """ Parse a connection string and setup the manager for working with a connection """
 
-        try:
-            if name in self.config:
-                connection = SQLAlchemyConnector(**self.config[name])
+        if name in self.config:
+            config = self.config[name].copy()
+            drivername = config.pop('drivername')
+            connector = self._load(drivername)
+            connection = connector(**config)
 
-            else:
-                print("Couldn't find connection target: {}".format(name))
-                return
-
-        except Exception as e:
-            print("Error on connection: {}".format(e))
-            return
+        else:
+            raise ValueError("No connection referred to by that name - '{}'".format(name))
 
         with self._setupHistory(name):
+            connection.serve()
 
-            query = [] # Store various lines of sql query to be executed
-            while True:
-                # Hold connection open until the user indicates that they would like to break
+    def remove(self, name: str):
+        if name in self.config:
+            del self.config[name]
+            os.remove(os.path.join(self.HISTORY_PATH, name + '.hist'))
+        else:
+            raise ValueError("Not connection exists with that name")
 
-                try:
-                    # Extract a line of the query
-                    sql = input('$ ')
-                    if not sql: continue # Empty - do nothing
+    def _load(self, drivername: str):
 
-                    while ';' in sql:
-                        query.append(sql[:sql.index(';')])
+        if drivername in self._loaded_connectors:
+            connector = self._loaded_connectors[drivername]
 
-                        connection.execute(' '.join(query))
-                        query.clear()
-
-                        sql = sql[sql.index(';') + 1:]
-
-                    query.append(sql)
-
-                except Exception as e:
-                    print("Execution Error: {}".format(e))
-
-                except KeyboardInterrupt:
-                    print()
+        else:
+            for entry_point in pkg_resources.iter_entry_points('sqlviewer_connectors'):
+                if entry_point.name == drivername:
+                    self._loaded_connectors[entry_point.name] = entry_point.load()
+                    connector = self._loaded_connectors[drivername]
                     break
+
+            else:
+                raise ValueError("Couldn't find a connector for the drivername '{}'".format(drivername))
+
+        return connector
 
     @contextlib.contextmanager
     def _setupHistory(self, name):

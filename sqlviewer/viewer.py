@@ -17,6 +17,10 @@ class DisplayManager:
     MASTER_PATH = os.path.join(DIRECTORY, "master.ini")
     MASTER_HISTORY = os.path.join(DIRECTORY, 'master.hist')
 
+    _PLUGINS = {
+        'example': "*** 'example' connector can be install via 'pip install sqlviewer_example' ***"
+    }
+
     def __init__(self):
         self.config = ConfigParser().read(self.MASTER_PATH)
         self._loaded_connectors = {}
@@ -144,7 +148,11 @@ class DisplayManager:
                     break
 
             else:
-                raise ValueError("Couldn't find a connector for the drivername '{}'".format(drivername))
+                message = "Couldn't find a connector for the drivername '{}'".format(drivername)
+                if drivername in self._PLUGINS:
+                    message += '\n{}'.format(self._PLUGINS[drivername])
+
+                raise ValueError(message)
 
         return connector
 

@@ -3,7 +3,6 @@ from setuptools import setup
 
 requires = [
     "betterpy",
-    "sqlalchemy",
     "psycopg2"
 ]
 
@@ -19,7 +18,7 @@ ensure(os.path.join(directory, 'master.hist'), lambda x: open(x, 'a').close())
 setup(
     name='sqlviewer',
     install_requires=requires,
-    version="0.1.0",
+    version="0.1.1",
     description="Basic cli sql viewer for databases - intended to allow for quick sanity checks",
 
     author="Kieran Bacon",

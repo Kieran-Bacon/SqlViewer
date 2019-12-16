@@ -44,6 +44,7 @@ class Connector:
 
             except Exception as e:
                 print("Execution Error: {}".format(e))
+                query.clear()
 
             except KeyboardInterrupt:
                 print()
